@@ -1,0 +1,50 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.6.3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+
+      - name: Get EC2 Public IP
+        id: ec2_ip
+        run: echo "PUBLIC_IP=$(terraform output -raw public_ip)" >> $GITHUB_ENV
+
+      - name: Update GitHub Secret EC2_IP
+        uses: peter-evans/create-or-update-secret@v4
+        with:
+          secret-name: EC2_IP
+          secret-value: ${{ env.PUBLIC_IP }}
+          repository: ${{ github.repository }}
+          token: ${{ secrets.KN_GITHUB_PAT }}
+
+      - name: Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: Copy files to EC2
+        run: |
+          scp -o StrictHostKeyChecking=no docker-compose.yml nginx.conf index.html ec2-user@${{ env.PUBLIC_IP }}:/home/ec2-user/
+
+      - name: Deploy Docker Compose
+        run: |
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PUBLIC_IP }} \
+          "docker-compose -f /home/ec2-user/docker-compose.yml up -d"
